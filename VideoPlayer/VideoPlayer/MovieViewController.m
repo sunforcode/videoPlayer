@@ -48,10 +48,12 @@ typedef NS_ENUM(NSInteger, PanDirection){
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    self.autoHideTopBottomBarTimer = [NSTimer scheduledTimerWithTimeInterval:2 target:self selector:@selector(autoHideTopBottomBar:) userInfo:nil repeats:NO];
+    [self startAutoHideTopBottomBarTimer];
 }
 
 - (void)didClickBackBarItem: (UIButton *)sender {
+    [self endAutoHideTopBottomBarTimer];
+    [self endVideoProgressTimer];
     [self.navigationController popViewControllerAnimated:YES];
 }
 
@@ -79,21 +81,19 @@ typedef NS_ENUM(NSInteger, PanDirection){
 
 - (void)didClickFullScreenButton: (UIButton *)sender {
     sender.selected = !sender.selected;
-}
-
-- (void)volumeProgressValueChange: (UISlider *)sender {
-    NSLog(@"%f",sender.value );
+    
+    self.videoPlayer.scalingMode = sender.selected? MPMovieScalingModeAspectFill : MPMovieScalingModeAspectFit;
 }
 
 - (void)playProgressSliderValueChange: (UISlider *)sender {
-    
-    [self.videoProgressTimer invalidate];
-    self.videoProgressTimer = nil;
+    [self endVideoProgressTimer];
+    [self endAutoHideTopBottomBarTimer];
     _playTimeLabel.text = [NSString stringWithFormat:@"%02d:%02d", (int)(_playProgressSlider.value/ 60.0)%60, (int)(_playProgressSlider.value)%60];
 }
 
 - (void)playProgressSliderTouchUpInside: (UISlider *)sender {
-   self.videoProgressTimer = [NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(videoProgressTimer:) userInfo:nil repeats:YES];
+    [self startAutoHideTopBottomBarTimer];
+    [self startVideoProgressTimer];
     self.videoPlayer.currentPlaybackTime = sender.value;
 }
 
@@ -101,7 +101,6 @@ typedef NS_ENUM(NSInteger, PanDirection){
     if (sender.value == 0) {
         self.volumeButton.selected = YES;
     }
-
 }
 
 #pragma mark - set/get
@@ -136,9 +135,7 @@ typedef NS_ENUM(NSInteger, PanDirection){
     [self.videoPlayer play];
     self.videoProgressTimer = [NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(videoProgressTimer:) userInfo:nil repeats:YES];
 }
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
 
-}
 - (void)setUpGesture {
     UIPanGestureRecognizer *panRecognizer = [[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(panGesture:)];
     panRecognizer.delegate = self;
@@ -173,18 +170,36 @@ typedef NS_ENUM(NSInteger, PanDirection){
         self.topBarView.alpha = 1;
         self.bottomBar.alpha = 1;
     }];
-    
     [timer invalidate];
     self.autoHideTopBottomBarTimer = nil;
 }
+
+//timerStart/timerEnd
+- (void)startVideoProgressTimer {
+    self.videoProgressTimer = [NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(videoProgressTimer:) userInfo:nil repeats:YES];
+}
+
+- (void)endVideoProgressTimer {
+    [self.videoProgressTimer invalidate];
+    self.videoProgressTimer = nil;
+}
+
+- (void)startAutoHideTopBottomBarTimer {
+    self.autoHideTopBottomBarTimer = [NSTimer scheduledTimerWithTimeInterval:2 target:self selector:@selector(autoHideTopBottomBar:) userInfo:nil repeats:NO];
+}
+- (void)endAutoHideTopBottomBarTimer {
+    [self.autoHideTopBottomBarTimer invalidate];
+    self.autoHideTopBottomBarTimer = nil;
+}
+
 #pragma 通知
 - (void)didReciveFinishNotification:(NSNotification *)notification {
     [self.videoPlayer stop];
     self.videoPlayer.currentPlaybackTime = 0.0;
+    self.playProgressSlider.value = 0;
     self.playButton.selected = YES;
-    
-    [self.videoProgressTimer invalidate];
-    self.videoProgressTimer = nil;
+    [self endVideoProgressTimer];
+    self.playTimeLabel.text = [NSString stringWithFormat:@"%02d:%02d", (int)(self.videoPlayer.currentPlaybackTime/ 60.0)%60, (int)(self.videoPlayer.currentPlaybackTime)%60];
 }
 
 #pragma 手势
@@ -266,8 +281,6 @@ typedef NS_ENUM(NSInteger, PanDirection){
         default:
             break;
     }
-    
-    
 }
 
 - (void)tapGesture:(UITapGestureRecognizer *)tapGesture {
@@ -275,24 +288,23 @@ typedef NS_ENUM(NSInteger, PanDirection){
     self.bottomBar.hidden = !self.bottomBar.hidden;
     
     if (self.autoHideTopBottomBarTimer != nil) {
-        [self.autoHideTopBottomBarTimer invalidate];
-        self.autoHideTopBottomBarTimer = nil;
+        [self endAutoHideTopBottomBarTimer];
     }
     if (self.topBarView.hidden == NO) {
-        self.autoHideTopBottomBarTimer = [NSTimer scheduledTimerWithTimeInterval:2 target:self selector:@selector(autoHideTopBottomBar:) userInfo:nil repeats:NO];
+        [self startAutoHideTopBottomBarTimer];
     }
 }
 #pragma mark -代理
 
-//-(BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
-//   CGFloat top = CGRectGetMaxY(self.topBarView.frame);
-//   CGFloat bottom = CGRectGetMinY(self.bottomBar.frame);
-//   CGRect okRect = CGRectMake(0, top, self.view.bounds.size.width, bottom - top);
-//    if (CGRectContainsPoint(okRect, [gestureRecognizer locationInView:self.view])) {
-//        return YES;
-//    }
-//    return NO;
-//}
+-(BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    CGFloat top = CGRectGetMaxY(self.topBarView.frame);
+    CGFloat bottom = CGRectGetMinY(self.bottomBar.frame);
+    CGRect okRect = CGRectMake(0, top, self.view.bounds.size.width, bottom - top);
+    if (CGRectContainsPoint(okRect, [gestureRecognizer locationInView:self.view])) {
+        return YES;
+    }
+    return NO;
+}
 
 
 
