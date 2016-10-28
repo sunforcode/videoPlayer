@@ -34,12 +34,16 @@ typedef NS_ENUM(NSInteger, PanDirection){
 
 @property(nonatomic, weak)NSTimer *videoProgressTimer;
 @property(nonatomic, weak)NSTimer *autoHideTopBottomBarTimer;
+
+/** 是否在调节音量*/
+@property (nonatomic, assign) BOOL                   isVolume;
 @end
 
 @implementation MovieViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.view.backgroundColor = [UIColor redColor];
     [self setUpUI];
     [self prepareToPlayWithText:nil];
     [self setUpGesture];
@@ -79,10 +83,34 @@ typedef NS_ENUM(NSInteger, PanDirection){
     self.volumeSlider.value = sender.selected? 0 : 0.3;
 }
 
+
+- (BOOL)shouldAutorotate
+{
+    return YES;
+}
 - (void)didClickFullScreenButton: (UIButton *)sender {
     sender.selected = !sender.selected;
+
+
+    UIDeviceOrientation orientation = [UIDevice currentDevice].orientation;
+    UIInterfaceOrientation interfaceOrientation = (UIInterfaceOrientation)orientation;
+    UIInterfaceOrientation orientationlast = UIInterfaceOrientationUnknown;
+    if (interfaceOrientation == UIInterfaceOrientationPortrait || interfaceOrientation == UIInterfaceOrientationPortraitUpsideDown) {
+         orientationlast = UIInterfaceOrientationLandscapeRight;
+    }else {
+        orientationlast = UIInterfaceOrientationPortrait;
+    }
     
-    self.videoPlayer.scalingMode = sender.selected? MPMovieScalingModeAspectFill : MPMovieScalingModeAspectFit;
+    if ([[UIDevice currentDevice] respondsToSelector:@selector(setOrientation:)]) {
+        SEL selector             = NSSelectorFromString(@"setOrientation:");
+        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:[UIDevice instanceMethodSignatureForSelector:selector]];
+        [invocation setSelector:selector];
+        [invocation setTarget:[UIDevice currentDevice]];
+        int val                  = orientationlast;
+        // 从2开始是因为0 1 两个参数已经被selector和target占用
+        [invocation setArgument:&val atIndex:2];
+        [invocation invoke];
+    }
 }
 
 - (void)playProgressSliderValueChange: (UISlider *)sender {
@@ -98,18 +126,47 @@ typedef NS_ENUM(NSInteger, PanDirection){
 }
 
 - (void)volumeSliderValueChange: (UISlider *)sender {
-    if (sender.value == 0) {
-        self.volumeButton.selected = YES;
-    }
+    self.volumeButton.selected = sender.value == 0;
 }
 
 #pragma mark - set/get
 
 
 #pragma mark - 系统方法
+#pragma mark 手势设置
+- (void)setUpGesture {
+    UIPanGestureRecognizer *panRecognizer = [[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(panGesture:)];
+    panRecognizer.delegate = self;
+    [panRecognizer setMaximumNumberOfTouches:1];
+    [panRecognizer setDelaysTouchesBegan:YES];
+    [panRecognizer setDelaysTouchesEnded:YES];
+    [panRecognizer setCancelsTouchesInView:YES];
+    [self.view addGestureRecognizer:panRecognizer];
+    
+    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc]initWithTarget:self action:@selector(tapGesture:)];
+    tapGesture.numberOfTapsRequired = 2;
+    [self.view addGestureRecognizer:tapGesture];
+    
+}
+#pragma mark 通知设置
+- (void)setUpNotification {
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didReciveFinishNotification:) name:MPMoviePlayerPlaybackDidFinishNotification object:nil];
+    // app退到后台
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didReciveDidEnterBackground:) name:UIApplicationWillResignActiveNotification object:nil];
+    // app进入前台
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didReciveDidEnterPlayground:) name:UIApplicationDidBecomeActiveNotification object:nil];
+    //拔插耳机
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioRouteChangeListenerCallback:) name:AVAudioSessionRouteChangeNotification object:nil];
+}
+
 
 -(BOOL)prefersStatusBarHidden {
-    return NO;
+    return YES;
+}
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations
+{
+    return UIInterfaceOrientationMaskAll;
 }
 
 #pragma mark - 私有方法
@@ -136,24 +193,7 @@ typedef NS_ENUM(NSInteger, PanDirection){
     self.videoProgressTimer = [NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(videoProgressTimer:) userInfo:nil repeats:YES];
 }
 
-- (void)setUpGesture {
-    UIPanGestureRecognizer *panRecognizer = [[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(panGesture:)];
-    panRecognizer.delegate = self;
-    [panRecognizer setMaximumNumberOfTouches:1];
-    [panRecognizer setDelaysTouchesBegan:YES];
-    [panRecognizer setDelaysTouchesEnded:YES];
-    [panRecognizer setCancelsTouchesInView:YES];
-    [self.view addGestureRecognizer:panRecognizer];
-    
-    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc]initWithTarget:self action:@selector(tapGesture:)];
-    tapGesture.numberOfTapsRequired = 2;
-    [self.view addGestureRecognizer:tapGesture];
-    
-}
 
-- (void)setUpNotification {
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didReciveFinishNotification:) name:MPMoviePlayerPlaybackDidFinishNotification object:nil];
-}
 
 - (void)videoProgressTimer:(NSTimer *)timer {
     self.playProgressSlider.value = self.videoPlayer.currentPlaybackTime;
@@ -192,7 +232,7 @@ typedef NS_ENUM(NSInteger, PanDirection){
     self.autoHideTopBottomBarTimer = nil;
 }
 
-#pragma 通知
+#pragma mark 通知
 - (void)didReciveFinishNotification:(NSNotification *)notification {
     [self.videoPlayer stop];
     self.videoPlayer.currentPlaybackTime = 0.0;
@@ -202,41 +242,74 @@ typedef NS_ENUM(NSInteger, PanDirection){
     self.playTimeLabel.text = [NSString stringWithFormat:@"%02d:%02d", (int)(self.videoPlayer.currentPlaybackTime/ 60.0)%60, (int)(self.videoPlayer.currentPlaybackTime)%60];
 }
 
-#pragma 手势
+- (void)didReciveDidEnterBackground:(NSNotification *)notification {
+    self.playButton.selected = NO;
+}
+
+- (void)didReciveDidEnterPlayground:(NSNotification *)notification {
+    self.playButton.selected = YES;
+    [self.videoPlayer play];
+}
+
+
+- (void)audioRouteChangeListenerCallback: (NSNotification *)notification {
+    NSDictionary *interuptionDict = notification.userInfo;
+    
+    NSInteger routeChangeReason = [[interuptionDict valueForKey:AVAudioSessionRouteChangeReasonKey] integerValue];
+    
+    switch (routeChangeReason) {
+            
+        case AVAudioSessionRouteChangeReasonNewDeviceAvailable:
+            // 耳机插入
+            break;
+            
+        case AVAudioSessionRouteChangeReasonOldDeviceUnavailable:
+        {
+            // 耳机拔掉
+            // 拔掉耳机继续播放
+            [self.videoPlayer play];
+        }
+            break;
+            
+        case AVAudioSessionRouteChangeReasonCategoryChange:
+            // called at start - also when other audio wants to play
+            NSLog(@"AVAudioSessionRouteChangeReasonCategoryChange");
+            break;
+    }
+}
+
+
+
+
+#pragma mark手势
 - (void)panGesture:(UIPanGestureRecognizer *)pan {
-    //    NSLog(@"清扫的手势");
     //根据在view上Pan的位置，确定是调音量还是亮度
     CGPoint locationPoint = [pan locationInView:self.view];
-    
-    // 我们要响应水平移动和垂直移动
     // 根据上次和本次移动的位置，算出一个速率的point
     CGPoint veloctyPoint = [pan velocityInView:self.view];
     // 判断是垂直移动还是水平移动
     switch (pan.state) {
         case UIGestureRecognizerStateBegan:{ // 开始移动
             // 使用绝对值来判断移动的方向
+            self.topBarView.hidden = NO;
+            self.bottomBar.hidden = NO;
+            [self endVideoProgressTimer];
+            [self endAutoHideTopBottomBarTimer];
             CGFloat x = fabs(veloctyPoint.x);
             CGFloat y = fabs(veloctyPoint.y);
             if (x > y) { // 水平移动
                 // 取消隐藏
                 self.panDirection = PanDirectionHorizontalMoved;
-                //                // 给sumTime初值
-                //                CMTime time       = self.videoPlayer.currentTime;
-                //                self.sumTime      = time.value/time.timescale;
-                //水平移动 前进或后退进度
-                NSLog(@"改变进度");
             }
             else if (x < y){ // 垂直移动
                 self.panDirection = PanDirectionVerticalMoved;
                 // 开始滑动的时候,状态改为正在控制音量
                 if (locationPoint.x > self.view.bounds.size.width / 2) {
-                    //                    self.isVolume = YES;
-                    NSLog(@"改变音量");
+                    self.isVolume = YES;
                     //改变音量
                 }else { // 状态改为显示亮度调节
-                    //                    self.isVolume = NO;
+                    self.isVolume = NO;
                     //亮度调节
-                    NSLog(@"改变亮度");
                 }
             }
             break;
@@ -244,43 +317,44 @@ typedef NS_ENUM(NSInteger, PanDirection){
         case UIGestureRecognizerStateChanged:{ // 正在移动
             switch (self.panDirection) {
                 case PanDirectionHorizontalMoved:{
-                    //                    [self horizontalMoved:veloctyPoint.x]; // 水平移动的方法只要x方向的值
-                    
+                    [self horizontalMoved:veloctyPoint.x]; // 水平移动的方法只要x方向的值
                     break;
                 }
                 case PanDirectionVerticalMoved:{
-                    //                    [self verticalMoved:veloctyPoint.y]; // 垂直移动方法只要y方向的值
+                    [self verticalMoved:veloctyPoint.y]; // 垂直移动方法只要y方向的值
                     break;
                 }
-                default:
-                    break;
             }
             break;
         }
         case UIGestureRecognizerStateEnded:{ // 移动停止
+            [self startAutoHideTopBottomBarTimer];
+            [self startVideoProgressTimer];
             // 移动结束也需要判断垂直或者平移
             // 比如水平移动结束时，要快进到指定位置，如果这里没有判断，当我们调节音量完之后，会出现屏幕跳动的bug
             switch (self.panDirection) {
                 case PanDirectionHorizontalMoved:{
-                    //                    self.isPauseByUser = NO;
-                    //                    [self seekToTime:self.sumTime completionHandler:nil];
-                    // 把sumTime滞空，不然会越加越多
-                    self.sumTime = 0;
+                    self.videoPlayer.currentPlaybackTime = self.playProgressSlider.value;
                     break;
                 }
                 case PanDirectionVerticalMoved:{
-                    // 垂直移动结束后，把状态改为不再控制音量
-                    //                    self.isVolume = NO;
                     break;
                 }
-                default:
-                    break;
             }
             break;
         }
         default:
             break;
     }
+}
+
+- (void)verticalMoved:(CGFloat)value {
+    self.isVolume ? (self.volumeSlider.value -= value / 10000) : ([UIScreen mainScreen].brightness -= value / 10000);
+}
+
+- (void)horizontalMoved:(CGFloat)value {
+    self.playProgressSlider.value += value/1000;
+    self.playTimeLabel.text = [NSString stringWithFormat:@"%02d:%02d", (int)(self.playProgressSlider.value/ 60.0)%60, (int)(self.playProgressSlider.value)%60];
 }
 
 - (void)tapGesture:(UITapGestureRecognizer *)tapGesture {
@@ -305,8 +379,6 @@ typedef NS_ENUM(NSInteger, PanDirection){
     }
     return NO;
 }
-
-
 
 #pragma mark - setUpUI
 - (void)setUpUI {
@@ -518,7 +590,7 @@ typedef NS_ENUM(NSInteger, PanDirection){
         make.top.equalTo(playProgressSlider.mas_top);
         make.right.equalTo(fullScreenButton.mas_left).offset(-8);
         make.height.mas_equalTo(44);
-        make.width.mas_equalTo(120);
+        make.width.mas_equalTo(60);
     }];
     
     [fullScreenButton mas_makeConstraints:^(MASConstraintMaker *make) {
